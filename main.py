@@ -133,8 +133,14 @@ def gemini_summaries(stories: list[dict[str, str]]) -> list[dict[str, str]]:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=90) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # Google returns a JSON error body with the actionable permission detail.
+        # Include it in the Actions log so 403s can be diagnosed without exposing the key.
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini API returned HTTP {exc.code}: {detail}") from None
     text = result["candidates"][0]["content"]["parts"][0]["text"]
     selected = json.loads(text).get("stories", [])
     final: list[dict[str, str]] = []
