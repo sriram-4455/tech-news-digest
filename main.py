@@ -7,6 +7,7 @@ import os
 import re
 import smtplib
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -142,14 +143,33 @@ def gemini_summaries(stories: list[dict[str, str]]) -> list[dict[str, str]]:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        # Google returns a JSON error body with the actionable permission detail.
-        # Include it in the Actions log so 403s can be diagnosed without exposing the key.
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Gemini API returned HTTP {exc.code}: {detail}") from None
+    result = None
+    max_attempts = 4
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=90) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:
+            # 429 and temporary server errors can clear after a short wait.
+            # Retry these without exposing the API key; report other errors immediately.
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code in {429, 500, 502, 503, 504} and attempt < max_attempts:
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    wait_seconds = min(120, max(1, int(retry_after))) if retry_after else 15 * (2 ** (attempt - 1))
+                except ValueError:
+                    wait_seconds = 15 * (2 ** (attempt - 1))
+                print(
+                    f"Gemini returned HTTP {exc.code}; retrying in {wait_seconds}s "
+                    f"(attempt {attempt}/{max_attempts}).",
+                    file=sys.stderr,
+                )
+                time.sleep(wait_seconds)
+                continue
+            raise RuntimeError(f"Gemini API returned HTTP {exc.code}: {detail}") from None
+    if result is None:
+        raise RuntimeError("Gemini did not return a response after the retry attempts.")
     text = result["candidates"][0]["content"]["parts"][0]["text"]
     selected = json.loads(text).get("stories", [])
     final: list[dict[str, str]] = []
