@@ -181,6 +181,26 @@ def gemini_summaries(stories: list[dict[str, str]]) -> list[dict[str, str]]:
                     )
                     break
                 raise RuntimeError(f"Gemini API returned HTTP {exc.code}: {detail}") from None
+            except (TimeoutError, urllib.error.URLError) as exc:
+                if attempt < max_attempts:
+                    wait_seconds = 15 * (2 ** (attempt - 1))
+                    print(
+                        f"Gemini model {active_model} timed out or had a network error; "
+                        f"retrying in {wait_seconds}s (attempt {attempt}/{max_attempts}): {exc}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
+                if model_index < len(models) - 1:
+                    print(
+                        f"Gemini model {active_model} remains unreachable; trying fallback model "
+                        f"{fallback_model}.",
+                        file=sys.stderr,
+                    )
+                    break
+                raise RuntimeError(
+                    f"Gemini request to {active_model} timed out or failed after {max_attempts} attempts: {exc}"
+                ) from None
         if result is not None:
             break
     if result is None:
