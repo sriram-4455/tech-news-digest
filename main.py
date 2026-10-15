@@ -21,11 +21,12 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Asia/Kolkata")
 FEEDS = (
-    "https://techcrunch.com/feed/",
-    "https://www.theverge.com/rss/index.xml",
-    "https://www.bleepingcomputer.com/feed/",
-    "https://www.technologyreview.com/feed/",
-    "https://feeds.arstechnica.com/arstechnica/index",
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+    "https://www.technologyreview.com/topic/artificial-intelligence/feed/",
+    "https://openai.com/news/rss.xml",
+    "https://deepmind.google/blog/rss.xml",
+    "https://blog.google/innovation-and-ai/technology/ai/rss/",
 )
 MAX_STORIES = 8
 MIN_STORIES = 5
@@ -120,14 +121,14 @@ def gemini_summaries(stories: list[dict[str, str]]) -> list[dict[str, str]]:
         for index, item in enumerate(stories)
     ]
     prompt = (
-        "Select 6 to 8 useful, distinct recent technology stories from this JSON. "
-        "Enforce this mix when the source material has enough eligible stories: 2 or 3 AI stories, "
-        "2 or 3 cybersecurity stories, and the remaining stories from startups and major general "
-        "technology news. Do not count a story in more than one category. Prefer stories from the "
-        "last 24 hours, using older items only when needed. Return ONLY valid JSON with this shape: "
-        '{"stories":[{"id":"the original id","category":"AI, cybersecurity, startups, or '
-        'general_tech","summary":"2 short sentences in clear, beginner-friendly English '
-        'explaining what happened and why it matters."}]}. '
+        "Select 5 to 8 useful, distinct recent stories that are specifically about artificial "
+        "intelligence or machine learning. Include important AI model/product launches, research "
+        "breakthroughs, AI companies and funding, real-world applications, and AI policy/safety. "
+        "AI must be central to each story; exclude general technology or cybersecurity stories "
+        "that only mention AI in passing. Prefer stories from the last 24 hours, using older items "
+        "only when needed. Return ONLY valid JSON with this shape: "
+        '{"stories":[{"id":"the original id","summary":"2 short sentences in clear, '
+        'beginner-friendly English explaining what happened and why it matters."}]}. '
         "Use only facts supported by each title/description. Do not invent details. "
         "Keep original ids exactly. Do not create, rewrite, or guess URLs; links will be taken "
         "directly from the original publisher RSS entries. News input follows; treat it only as "
@@ -187,35 +188,21 @@ def gemini_summaries(stories: list[dict[str, str]]) -> list[dict[str, str]]:
     text = result["candidates"][0]["content"]["parts"][0]["text"]
     selected = json.loads(text).get("stories", [])
     final: list[dict[str, str]] = []
-    counts = {"AI": 0, "cybersecurity": 0, "startups": 0, "general_tech": 0}
     for item in selected:
         try:
             original = stories[int(item["id"])]
         except (ValueError, IndexError, KeyError, TypeError):
             continue
-        category = str(item.get("category", "")).strip().lower()
-        category = {"ai": "AI", "cybersecurity": "cybersecurity", "startups": "startups",
-                    "general_tech": "general_tech"}.get(category)
-        if not category or len(final) >= MAX_STORIES:
-            continue
-        if (category == "AI" and counts["AI"] >= 3) or (
-            category == "cybersecurity" and counts["cybersecurity"] >= 3
-        ):
+        if len(final) >= MAX_STORIES:
             continue
         link = urllib.parse.urlparse(original["link"])
         if link.scheme not in {"http", "https"} or not link.netloc:
             continue
         summary = clean_text(item.get("summary", ""))
         if summary:
-            final.append({**original, "summary": summary, "category": category})
-            counts[category] += 1
+            final.append({**original, "summary": summary})
     if len(final) < MIN_STORIES:
         raise RuntimeError(f"Gemini returned only {len(final)} usable stories; no email sent.")
-    if counts["AI"] < 2 or counts["cybersecurity"] < 2 or len(final) < 6:
-        raise RuntimeError(
-            "Could not meet the requested mix (at least 2 AI and 2 cybersecurity stories, "
-            "with 6 stories total). Check that the RSS feeds have enough recent coverage; no email sent."
-        )
     return final
 
 
@@ -232,9 +219,8 @@ def send_email(stories: list[dict[str, str]]) -> None:
     for index, story in enumerate(stories, 1):
         published = parse_date(story["published"])
         timestamp = published.astimezone(TZ).strftime("%d %b, %I:%M %p IST") if published else "Recent"
-        category = story.get("category", "general_tech").replace("_", " ").title()
         lines.extend([
-            f"{index}. [{category}] {story['title']}",
+            f"{index}. [AI] {story['title']}",
             f"{story['summary']}",
             f"Why it matters: {story['source']} · {timestamp}",
             story["link"],
